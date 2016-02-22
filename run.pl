@@ -13,8 +13,12 @@ my $ds = DNS_SIMPLE->new();
 $ds->dump;
 
 $ds->setServer("192.168.0.1");
-my @query = ("www.google.com", "www.yahoo.co.jp");
+#my @query = ("www.google.com", "www.yahoo.co.jp");
+my @query = ("www.google.com");
+#my @query = ("www.yahoo.co.jp");
+#my @query = ("182.22.70.251");
 $ds->setQuery(\@query);
+$ds->setType('TXT');
 $ds->execute();
 
 $ds->dump;

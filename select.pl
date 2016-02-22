@@ -39,6 +39,7 @@ while(my @ready = $s->can_read() ) {
 	my $str = '';
 	while(read($_, my $buff, 1)){
 	    $str .= $buff;
+	    last if length($str) >= 2048;
 	}
 	warn $str if length($str) > 0;
 	$s->remove($_);
