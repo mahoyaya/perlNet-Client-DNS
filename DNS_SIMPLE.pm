@@ -1,10 +1,10 @@
 package DNS_SIMPLE;
 our $VERSION = '0.00001';
 use strict;
+use warnings;
 use Carp;
 use JSON; #別実装する
 use Time::HiRes qw(usleep);
-#use QueryFormat;
 
 #my %reqid = {};
 my $results = [];
@@ -26,7 +26,7 @@ sub new {
     return $self;
 }
 
-sub setEDNS {
+sub set_edns {
     my $self = shift;
     my $bool = shift;
     if( $bool ) {
@@ -38,7 +38,7 @@ sub setEDNS {
     return $bool;
 }
 
-sub setServer {
+sub set_server {
     my $self = shift;
     my $server = shift;
     if ( $server ) {
@@ -47,7 +47,7 @@ sub setServer {
     return $self->{SERVER};
 }
 
-sub setPort {
+sub set_port {
     my $self = shift;
     my $port = shift;
     if ( $port ) {
@@ -57,7 +57,7 @@ sub setPort {
     return $self->{PORT};
 }
 
-sub setQuery {
+sub set_query {
     my $self = shift;
     my $aref_query = shift;
     my @q = @$aref_query;
@@ -65,7 +65,7 @@ sub setQuery {
     return $self->{QUERY};
 }
 
-sub setType {
+sub set_type {
     my $self = shift;
     my $type = shift;
     if ( $type ) {
@@ -77,7 +77,7 @@ sub setType {
     return $self->{TYPE};
 }
 
-sub setTimeout {
+sub set_timeout {
     my $self = shift;
     my $to = shift;
     if ( $to ) {
@@ -86,13 +86,13 @@ sub setTimeout {
     return $self->{TIMEOUT};;
 }
 
-sub getTransactionID {
+sub _gen_transaction_id {
     my $self = shift;
     my $id = undef;
     while ( ! $id ) {
         my $lid = int(rand(65535)) + 1;
         if ( exists $self->{ID}->{$lid} ) {
-            #carp("getTransactionID: generated transaction id was exists. $lid");
+            #carp("_gen_transaction_id: generated transaction id was exists. $lid");
             next;
         }
         $id = $lid;
@@ -101,9 +101,175 @@ sub getTransactionID {
     return $id;
 }
 
-sub getResults {
+sub get_results {
     my $self = shift;
     return $self->{RESULTS};
+}
+
+
+# output headers like a dig command.
+sub get_headers {
+    my $self = shift;
+    my $ref = shift;
+    my $str;
+    my @opcode = qw( QUERY INQUERY SERVERSTAT );
+    my @rcode = qw( NOERROR FORMERROR SERVERERROR NXDOMAIN undef REFUSED );
+
+    if ( ref $ref ) {
+        my $f1 = $ref->{OPCODE};
+        my $f2 = $ref->{RCODE};
+        my @f3 = ();
+        push @f3, "qr" if $ref->{QR};
+        push @f3, "aa" if $ref->{AA};
+        push @f3, "rd" if $ref->{RD};
+        push @f3, "ra" if $ref->{RA};
+        $str = ";; Got answer:\n;; ->>HEADER<<- ";
+        $str .= "opcode: " . $opcode[$f1];
+        $str .= ", status: " . $rcode[$f2];
+        $str .= ", id: " . $ref->{ID},
+        $str .= "\n;; flags: " . join " ", @f3;
+        $str .= "; QUERY: " . $ref->{QUESTION};
+        $str .= ", ANSWER: " . $ref->{ANSWER};
+        $str .= ", AUTHORITY: " . $ref->{AUTHORITY};
+        $str .= ", ADDITIONAL: " . $ref->{ADDITIONAL};
+        $str .= "\n";
+
+    } else {
+        carp "reveived data is not a reference.";
+        return;
+    }
+
+    return $str;
+}
+
+sub is_error {
+    my $self = shift;
+    my $ref = shift;
+    if ( ref $ref ) {
+        if( $ref->{RCODE} ) {
+            return 1;
+        } else {
+            return 0;
+        }
+    } else {
+        carp "reveived data is not a reference.";
+        return;
+    }
+}
+
+# ;; ANSWER SECTION:
+# www.yahoo.co.jp.        420     IN      CNAME   www.g.yahoo.co.jp.
+# www.g.yahoo.co.jp.      17      IN      A       182.22.70.251
+# www.g.yahoo.co.jp.      17      IN      A       124.83.139.220
+# www.g.yahoo.co.jp.      17      IN      A       124.83.147.249
+# www.g.yahoo.co.jp.      17      IN      A       182.22.71.251
+sub get_answer {
+    my $self = shift;
+    my $ref = shift;
+    my $str = ";; ANSWER SECTION:\n";
+    if ( ref $ref ) {
+        #carp Dumper($ref);
+        my $answer = $ref->{ANSWER};
+        my $aref_answers = $ref->{ANSWERS};
+        confess "Malformed ANSWER" if $answer != scalar @$aref_answers;
+        for my $href (@$aref_answers) {
+            my $pstr = $self->_make_answer($href);
+            if ( $pstr ) {
+                $str .= $pstr;
+            } else {
+                confess "Malformed ANSWER";
+            }
+        }
+    } else {
+        carp "reveived data is not a reference.";
+        return;
+    }
+    return $str;
+}
+
+sub get_authority {
+    my $self = shift;
+    my $ref = shift;
+    my $str = ";; AUTHORITY SECTION:\n";
+    if ( ref $ref ) {
+        #carp Dumper($ref);
+        my $authority = $ref->{AUTHORITY};
+        my $aref_authoritys = $ref->{AUTHORITYS};
+        confess "Malformed AUTHORITY" if $authority != scalar @$aref_authoritys;
+        for my $href (@$aref_authoritys) {
+            my $pstr = $self->_make_answer($href);
+            if ( $pstr ) {
+                $str .= $pstr;
+            } else {
+                confess "Malformed AUTHORITY";
+            }
+        }
+    } else {
+        carp "reveived data is not a reference.";
+        return;
+    }
+    return $str;
+}
+
+sub get_additional {
+    my $self = shift;
+    my $ref = shift;
+    my $str = ";; ADDITIONAL SECTION:\n";
+    if ( ref $ref ) {
+        #carp Dumper($ref);
+        my $authority = $ref->{ADDITIONAL};
+        my $aref_authoritys = $ref->{ADDITIONALS};
+        confess "Malformed ADDITIONAL" if $authority != scalar @$aref_authoritys;
+        for my $href (@$aref_authoritys) {
+            my $pstr = $self->_make_answer($href);
+            if ( $pstr ) {
+                $str .= $pstr;
+            } else {
+                confess "Malformed ADDITIONAL";
+            }
+        }
+    } else {
+        carp "reveived data is not a reference.";
+        return;
+    }
+    return $str;
+}
+
+sub _make_answer {
+    my $self = shift;
+    my $href = shift;
+    my $str = "";
+    if ( ref $href ) {
+        my $t = $href->{TYPE};
+        if ( $t eq "A" || $t eq "PTR" ) {
+            $str .= sprintf "%-24s%-8d%-8s%-8s%-24s\n", $href->{NAME} . '.', $href->{TTL}, "IN", $t, $href->{ADDRESS};
+        } elsif ( $t eq "AAAA" ) {
+            my $aaaa = length($href->{AAAAADDRESS}) + 1;
+            $str .= sprintf "%-24s%-8d%-8s%-8s%-${aaaa}s\n", $href->{NAME} . '.', $href->{TTL}, "IN", $t, $href->{AAAAADDRESS};
+        } elsif ( $t eq "CNAME" || $t eq "NS" || $t eq "TXT" ) {
+            $str .= sprintf "%-24s%-8d%-8s%-8s%-24s\n", $href->{NAME} . '.', $href->{TTL}, "IN", $t, $href->{DATA};
+        } elsif ( $t eq "MX" ) {
+            $str .= sprintf "%-24s%-8d%-8s%-8s%-8s%-24s\n", $href->{NAME} . '.', $href->{TTL}, "IN", $t, $href->{PREFERENCE}, $href->{NAME};
+        } elsif ( $t eq "SOA" ) {
+            my $pns = length($href->{PNS}) + 1;
+            my $serial = length($href->{SERIAL}) + 1;
+            my $refresh = length($href->{REFRESH}) + 1;
+            my $retry = length($href->{RETRY}) + 1;
+            my $expire = length($href->{EXPIRE}) + 1;
+            my $minttl = length($href->{MINTTL}) + 1;
+            $str .= sprintf "%-24s%-8d%-8s%-8s%-${pns}s%-24s%-${serial}s%-${refresh}d%-${retry}d%-${expire}d%-${minttl}d\n", $href->{PNS}, $href->{TTL}, "IN", $t, $href->{PNS}, $href->{RAMBOX}, $href->{SERIAL}, $href->{REFRESH}, $href->{RETRY}, $href->{EXPIRE}, $href->{MINTTL};
+        } elsif ( $t eq "SRV" ) {
+            my $priority = length($href->{PRIORITY}) + 1;
+            my $weight = length($href->{WEIGHT}) + 1;
+            my $port = length($href->{PORT}) + 1;
+            my $target = length($href->{TARGET}) + 1;
+            $str .= sprintf "%-24s%-4d%-5s%-8s%-${priority}s%-${weight}s%-${port}s%-${target}s\n", $href->{SERVICE} . '.' . $href->{PROTOCOL} . '.' . $href->{NAME} . '.', $href->{TTL}, "IN", $t, $href->{PRIORITY}, $href->{WEIGHT}, $href->{PORT}, $href->{TARGET} . '.';
+        }
+    } else {
+        carp "reveived data is not a reference.";
+        return;
+    }
+    return $str;
 }
 
 sub execute {
@@ -120,13 +286,46 @@ sub execute {
     my $data = "";
     my $href_h = {}; # handler
 
-    my $qfr = {};
-    my $qf = {};
+    my $qfr = {
+        ID => undef, # 16bit, transaction id
+        QR => undef, # 1bit, query 0, reply 1
+        OPCODE => undef, # 4bit, standard 0, inverse 1, server status request 2
+        AA => undef, # 1bit, Authorative Answer
+        TC => undef, # 1bit, TurnCation, is fragment 1
+        RD => undef, # 1bit, Recursion Desired, request Recursion 1
+        RA => undef, # 1bit, Recursion Available, support Recursion 1
+        Z => undef, # 3bit, reserved bits, 000
+        RCODE => undef, # 4bit, no error 0, format error 1, server error 2, name error 3, undef 4, refuse 5
+        QUESTION => undef, # 16bit, question
+        ANSWER => undef, # 16bit, answer
+        AUTHORITY => undef, # 16bit, authority
+        ADDITIONAL => undef, # 16bit, additional
+        QUESTIONS => [],
+        ANSWERS => [],
+        AUTHORITYS => [],
+        ADDITIONALS => [],
+    };
+    my $qf = {
+        ID => undef, # 16bit, transaction id
+        QR => undef, # 1bit, query 0, reply 1
+        OPCODE => undef, # 4bit, standard 0, inverse 1, server status request 2
+        AA => undef, # 1bit, Authorative Answer
+        TC => undef, # 1bit, TurnCation, is fragment 1
+        RD => undef, # 1bit, Recursion Desired, request Recursion 1
+        RA => undef, # 1bit, Recursion Available, support Recursion 1
+        Z => undef, # 3bit, reserved bits, 000
+        RCODE => undef, # 4bit, no error 0, format error 1, server error 2, name error 3, undef 4, refuse 5
+        QUESTION => undef, # 16bit, question
+        ANSWER => undef, # 16bit, answer
+        AUTHORITY => undef, # 16bit, authority
+        ADDITIONAL => undef, # 16bit, additional
+    };
+
     $qf->{QR} = '0';
     $qf->{OPCODE} = '0000';
     $qf->{AA} = '0';
     $qf->{TC} = '0';
-    $qf->{RD} = '1';
+    $qf->{RD} = '1'; #
     $qf->{RA} = '0';
     $qf->{Z} = '000';
     $qf->{RCODE} = '0000';
@@ -142,7 +341,7 @@ sub execute {
         push @pipes, my $p = IO::Pipe->new;
 
         # generate transaction id
-        my $id = $self->getTransactionID();
+        my $id = $self->_gen_transaction_id();
         $qf->{ID} = $id;
 
         my $pid = fork;
@@ -151,16 +350,16 @@ sub execute {
             $p->writer;
 
             # ヘッダ情報を送信可能な状態に変換
-            $data = $self->makeHeaders($qf);
+            $data = $self->_make_headers($qf);
             # クエリー情報をデータを送信能可な状態に変換
             if ( uc($self->{TYPE}) eq "PTR" ) {
                 #ポインタレコード
                 my @r = reverse split /\./, $q;
                 $q = (join '.', @r) . ".in-addr.arpa";
             }
-            $data .= $self->makeQuery($q);
-            $data .= $self->makeType($self->{TYPE});
-            $data .= $self->makeClass();
+            $data .= $self->_make_query($q);
+            $data .= $self->_make_type($self->{TYPE});
+            $data .= $self->_make_class();
 
             #carp("send data:" . unpack("H*", $data));
 
@@ -206,21 +405,15 @@ sub execute {
                     #carp("tid:" . unpack("H*", $tid) . "(" . unpack("n", $tid) .")");
                     #carp("ident16bit:". unpack("B16", $ident16bit) . "(" . unpack("n", $ident16bit) .")");
 
-                    $qfr = {
-                        QUES => [],
-                        ANSS => [],
-                        AUTS => [],
-                        ADDS => [],
-                    };
                     $qfr->{ID} = unpack("n", $tid);
                     $qfr->{QR} = vec($identifer, 7, 1); # vecはリトルエンディアンで処理される
-                    $qfr->{OPCODE} = $self->readNetBin($ident16bit, 1, 4); # 2bit目から4bit分のデータを数値で取得する
+                    $qfr->{OPCODE} = $self->_read_net_bin($ident16bit, 1, 4); # 2bit目から4bit分のデータを数値で取得する
                     $qfr->{AA} = vec($identifer, 2, 1);
                     $qfr->{TC} = vec($identifer, 1, 1);
                     $qfr->{RD} = vec($identifer, 0, 1);
                     $qfr->{RA} = vec($identifer, 15, 1);
-                    $qfr->{Z} = $self->readNetBin($ident16bit, 9, 3);
-                    $qfr->{RCODE} = $self->readNetBin($ident16bit, 12, 4);
+                    $qfr->{Z} = $self->_read_net_bin($ident16bit, 9, 3);
+                    $qfr->{RCODE} = $self->_read_net_bin($ident16bit, 12, 4);
                     $qfr->{QUESTION} = unpack("n", $hq);
                     $qfr->{ANSWER} = unpack("n", $hans);
                     $qfr->{AUTHORITY} = unpack("n", $hauth);
@@ -238,27 +431,27 @@ sub execute {
 
                     # QUESTIONSの取得
                     for ( my $i = 0; $i < $qfr->{QUESTION}; $i++ ) {
-                        #carp "[$i]getQueries";
+                        #carp "[$i]_get_queries";
                         #carp join ",", $self->getQueries(\@ary_buffer);
-                        push @{$qfr->{QUES}}, $self->getQueries(\@ary_buffer);
+                        push @{$qfr->{QUESTIONS}}, $self->_get_queries(\@ary_buffer);
                     }
 
                     # ANSWERSの取得
                     for ( my $i = 0; $i < $qfr->{ANSWER}; $i++ ) {
-                        #carp "[$i]getAnswers";
-                        push @{$qfr->{ANSS}}, $self->getAnswers(\@ary_buffer, \@ary_buffer_full);
+                        #carp "[$i]_get_answers";
+                        push @{$qfr->{ANSWERS}}, $self->_get_answers(\@ary_buffer, \@ary_buffer_full);
                     }
 
                     # AUTHORITYの取得
                     for ( my $i = 0; $i < $qfr->{AUTHORITY}; $i++ ) {
-                        #carp "[$i]getAnswers(Authoritative names servers)";
-                        push @{$qfr->{AUTS}},  $self->getAnswers(\@ary_buffer, \@ary_buffer_full);
+                        #carp "[$i]_get_answers(Authoritative names servers)";
+                        push @{$qfr->{AUTHORITYS}},  $self->_get_answers(\@ary_buffer, \@ary_buffer_full);
                     }
 
                     # ADDITIONALの取得
                     for ( my $i = 0; $i < $qfr->{ADDITIONAL}; $i++ ) {
-                        #carp "[$i]getAnswers(Additional records)";
-                        push @{$qfr->{ADDS}}, $self->getAnswers(\@ary_buffer, \@ary_buffer_full);
+                        #carp "[$i]_get_answers(Additional records)";
+                        push @{$qfr->{ADDITIONALS}}, $self->_get_answers(\@ary_buffer, \@ary_buffer_full);
                     }
 
                     ####################################################
@@ -326,7 +519,7 @@ sub execute {
                     # 該当pidの子プロセスが終了
                     my $h = decode_json($d->{$pid});
                     #carp "$_ is exited " . $buff;
-                    push @{$self->{RESULTS}}, $h->{RESULT};
+                    push @{${$self->{RESULTS}}}, $h->{RESULT};
                     delete $href_h->{$pid};
                     delete $d->{$pid};
                     push @ids, $h->{ID};
@@ -363,7 +556,7 @@ sub execute {
     return 1;
 }
 
-sub makeQuery {
+sub _make_query {
     my $self = shift;
     my $host = shift;
     my $binstr = '';
@@ -381,7 +574,7 @@ sub makeQuery {
     return $binstr;
 }
 
-sub typeLookup {
+sub _type_lookup {
     my $self = shift;
     my $type = shift;
     my $t = {
@@ -423,7 +616,7 @@ sub typeLookup {
     return 0;
 }
 
-sub makeType {
+sub _make_type {
     my $self = shift;
     my $type = uc shift;
     my $rstr = undef;
@@ -437,8 +630,8 @@ sub makeType {
         if ( $type =~ m/^33$/ ) {
             $rstr = $type;
         }
-        if ( $self->typeLookup($type) ) {
-            $rstr = $self->typeLookup($type);
+        if ( $self->_type_lookup($type) ) {
+            $rstr = $self->_type_lookup($type);
         }
     }
     if ( ! $rstr ) {
@@ -448,12 +641,12 @@ sub makeType {
     return pack("n", $rstr);
 }
 
-sub makeClass {
+sub _make_class {
     my $self = shift;
     return pack('n', 1);
 }
 
-sub makeHeaders {
+sub _make_headers {
     my $self = shift;
     my $qf = shift;
     my $data = "";
@@ -469,7 +662,7 @@ sub makeHeaders {
     return $data;
 }
 
-sub readNetBin {
+sub _read_net_bin {
     # $sビット目から$eビット分のビット列を数値変換する
     my $self = shift;
     my ($n, $s, $e) = @_;
@@ -485,13 +678,13 @@ sub readNetBin {
 }
 
 # ヘッダを取り除いた受信パケットのバイトデータ配列からQUERY部分を取り出す
-sub getQueries {
+sub _get_queries {
     my $self = shift;
     my $aref = shift;
     my $str = "";
     my $i = 0;
     my $l = 0; # label count
-    ($str, $l ) = $self->getQname($aref);
+    ($str, $l ) = $self->_get_qname($aref);
     if (length($str) > 0 ) {
         $str =~ s/.$//;
     } else {
@@ -502,7 +695,7 @@ sub getQueries {
     my $type .= shift @$aref;
     $type .= shift @$aref;
     $type = unpack("n", $type);
-    $type = $self->typeLookup($type);
+    $type = $self->_type_lookup($type);
 
 
     # クラスを取得
@@ -520,7 +713,7 @@ sub getQueries {
 }
 
 # ヘッダとQUERYを取り除いた受信パケットのバイトデータ配列からANSWER部分を取り出す
-sub getAnswers {
+sub _get_answers {
     use warnings;
     my $self = shift;
     my $aref = shift;
@@ -530,30 +723,30 @@ sub getAnswers {
     #my $preference = -1; # type MX preference
     #my $length = -1; # type TXT text length
 
-    #$self->dumpArray($aref, "0:");
+    #$self->dump_array($aref, "0:");
     # ネームを取得
-    ($str, $l ) = $self->getName($aref, $aref_full);
+    ($str, $l ) = $self->_get_name($aref, $aref_full);
     if (length($str) > 0 ) {
         $str =~ s/.$//;
     } else {
         $str = '.';
     }
 
-    #$self->dumpArray($aref, "1:");
+    #$self->dump_array($aref, "1:");
     # タイプを取得
     my $type = shift @$aref;
     $type .= shift @$aref;
     $type = unpack("n", $type);
-    $type = $self->typeLookup($type);
+    $type = $self->_type_lookup($type);
 
 
-    #$self->dumpArray($aref, "2:");
+    #$self->dump_array($aref, "2:");
     # クラスを取得
     my $class = shift @$aref;
     $class .= shift @$aref;
     $class = unpack("n", $class);
 
-    #$self->dumpArray($aref, "3:");
+    #$self->dump_array($aref, "3:");
     # TTLを取得
     my $ttl = shift @$aref;
     $ttl .= shift @$aref;
@@ -561,13 +754,13 @@ sub getAnswers {
     $ttl .= shift @$aref;
     $ttl = unpack("N", $ttl); # 32bit ビッグエンディアン
 
-    #$self->dumpArray($aref, "4:");
+    #$self->dump_array($aref, "4:");
     # データ長を取得
     my $dlen = shift @$aref;
     $dlen .= shift @$aref;
     $dlen = unpack("n", $dlen);
 
-    #$self->dumpArray($aref, "6:");
+    #$self->dump_array($aref, "6:");
     # データを取得
     my $data;
     for(my $i = 0; $i < $dlen; $i++) {
@@ -603,7 +796,7 @@ sub getAnswers {
     } elsif ( $type eq "CNAME" || $type eq "NS" ) {
         #carp "type $type convert data to QNAME";
         my @ary = $data =~ m/(.{1})/gs;
-        my ( $pstr, $pl ) =  $self->getName(\@ary, $aref_full);
+        my ( $pstr, $pl ) =  $self->_get_name(\@ary, $aref_full);
         $data = $pstr;
         $st->{DATA} = $data;
     } elsif ( $type eq "MX" ) {
@@ -611,16 +804,16 @@ sub getAnswers {
         my $preference = unpack("n", substr($data, 0, 2)); # 先頭2ByteはPreference
         $data =~ s/^..(.+)/$1/s;
         my @ary = $data =~ m/(.{1})/gs;
-        my ( $pstr, $pl ) =  $self->getName(\@ary, $aref_full);
+        my ( $pstr, $pl ) =  $self->_get_name(\@ary, $aref_full);
         $data = $pstr;
         $st->{PREFERENCE} = $preference;
         $st->{DATA} = $data;
     } elsif ( $type eq "SOA" ) {
         #carp "type $type convert data to QNAME";
         my @ary = $data =~ m/(.{1})/gs;
-        my ( $pstr, $pl ) =  $self->getName(\@ary, $aref_full);
+        my ( $pstr, $pl ) =  $self->_get_name(\@ary, $aref_full);
         $st->{PNS} = $pstr;
-        ( $pstr, $pl ) =  $self->getName(\@ary, $aref_full);
+        ( $pstr, $pl ) =  $self->_get_name(\@ary, $aref_full);
         $st->{RAMBOX} = $pstr;
         $st->{SERIAL} = unpack("N", join "", @ary[0..3]);
         $st->{REFRESH} = unpack("N", join "", @ary[4..7]);
@@ -631,7 +824,7 @@ sub getAnswers {
         my $length = unpack("C", substr($data, 0, 1)); # 先頭1Byteはlength
         $data =~ s/^.(.+)/$1/s;
         $st->{LENGTH} = $length;
-        $st->{DARA} = $data;
+        $st->{DATA} = $data;
     } elsif ( $type eq "SRV" ) {
         #carp "type $type convert data to QNAME";
         my @names = split '\.', $str;
@@ -643,7 +836,7 @@ sub getAnswers {
         $st->{PORT} = unpack("n", substr($data, 4, 6)); # 先頭5-6ByteはPort
         $data =~ s/^......(.+)/$1/s;
         my @ary = $data =~ m/(.{1})/gs;
-        my ( $pstr, $pl ) =  $self->getName(\@ary, $aref_full);
+        my ( $pstr, $pl ) =  $self->_get_name(\@ary, $aref_full);
         $pstr =~ s/\.$//;
         $st->{TARGET} = $pstr;
     } else {
@@ -653,13 +846,13 @@ sub getAnswers {
     return $st;
 }
 
-sub getName {
+sub _get_name {
     my $self = shift;
     my $aref = shift;
     my $aref_full = shift;
     my $str = "";
     my $l = 0;
-    #$self->dumpArray( $aref,  "getName:" );
+    #$self->dump_array( $aref,  "_get_name:" );
     while (my $b = shift @$aref) {
         my $byte = unpack("C", $b);
         #carp "byte:" . $byte . " hex:" . unpack("H*", $b);
@@ -667,7 +860,7 @@ sub getName {
             # ラベルとして処理
             #carp "isLABEL";
             unshift(@$aref, $b);
-            my ($pstr, $pl ) = $self->getQname($aref);
+            my ($pstr, $pl ) = $self->_get_qname($aref);
             $str .= $pstr;
             $l += $pl;
         } elsif( $byte > 63 ) {
@@ -681,13 +874,13 @@ sub getName {
             $offset = $offset >> 2; # オフセットを取得
             #carp "offset:" . $offset;
             my @ary = @$aref_full[$offset..$#{$aref_full}]; # フルデータの配列からオフセット分取り除いたものを取得
-            #carp $self->dumpArray( \@ary );
-            my ($pstr, $pl, $pp )= $self->getQname(\@ary);
+            #carp $self->dump_array( \@ary );
+            my ($pstr, $pl, $pp )= $self->_get_qname(\@ary);
             $str .= $pstr;
             $l += $pl;
             if ( $pp > 63 ) {
                 # 続くのはポインタ
-                my ( $ppstr, $ppl ) = $self->getName(\@ary, $aref_full);
+                my ( $ppstr, $ppl ) = $self->_get_name(\@ary, $aref_full);
                 $str .= $ppstr;
                 $l += $ppl;
             }
@@ -704,7 +897,7 @@ sub getName {
 }
 
 # 配列からDNSのQNAMEフォーマットでNAMEを取り出す
-sub getQname {
+sub _get_qname {
     my $self = shift;
     my $aref = shift;
     my $str = "";
@@ -732,7 +925,7 @@ sub getQname {
     return $str, $l, $p;
 }
 
-sub dumpArray {
+sub dump_array {
     # オクテットデータの配列を受け取り、文字か16進数で表示する
     my $self = shift;
     my $aref = shift;
@@ -750,7 +943,7 @@ sub dumpArray {
         $str .= " ";
     }
     $prefix ? $str = $prefix . " " . $str : 1;
-    carp "dumpArray:" .  $str;
+    carp "dump_array:" .  $str;
     return;
 }
 
@@ -798,3 +991,4 @@ IPv6 ff02::fb
   vec($_,@#,@#) = @<< == @######### @>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
   $off, $width, $bits, $val, $res
   .
+
