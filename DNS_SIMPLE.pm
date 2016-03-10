@@ -8,9 +8,12 @@ use Time::HiRes qw(usleep);
 
 #my %reqid = {};
 my $results = [];
+my @discards = qw( ID RESULTS );
+my $valid_v4_regex = qr/^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$/;
+my $valid_host_regex = qr/^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])$/;
 
 sub new {
-    my $class = shift;
+    my ($class, %args) = @_;
     my $self = {
         SERVER => undef,
         PORT => 53,
@@ -22,7 +25,33 @@ sub new {
         RESULTS => $results,
         EDNS => 0, #  Extension Mechanisms for DNS  EDNS0**3
     };
+
     bless($self, $class);
+
+    if ( %args ) {
+        for my $key ( keys %args ) {
+            croak "unsupport argument: $key" if grep { $key eq $_ } @discards;
+            if ( exists $self->{$key} ) {
+                if ( $key eq "TYPE" ) {
+                    croak "unsuppot TYPE." unless $self->_type_lookup($args{$key});
+                } elsif ( $key eq "PORT" || $key eq "TIMEOUT" ) {
+                    croak "invalid number. between 1 and 65535" unless $args{$key} =~ m/^\d+$/ && $args{$key} > 0 && $args{$key} < 65536;
+                } elsif ( $key eq "SERVER" ) {
+                    croak "invalid server name" unless $args{$key} =~ m/$valid_v4_regex/ or $args{$key} =~ m/$valid_host_regex/;
+                } elsif ( $key eq "QUERY" ) {
+                    croak "query parameter is not an array reference." unless ref $args{$key} eq "ARRAY";
+                    for my $host ( @{$args{$key}} ) {
+                        croak "invalid query string: $host" unless $host =~ m/$valid_v4_regex}/ or $host =~ m/$valid_host_regex/;
+                    }
+                } elsif ( $key eq "EDNS" ) {
+                    croak "unsuport argument EDNS. it is 0 or 1." unless $args{$key} =~ m/^[01]$/;
+                }
+                $self->{$key} = $args{$key};
+            } else {
+                warn "unsupport argument: $key";
+            }
+        }
+    }
     return $self;
 }
 
@@ -519,7 +548,7 @@ sub execute {
                     # 該当pidの子プロセスが終了
                     my $h = decode_json($d->{$pid});
                     #carp "$_ is exited " . $buff;
-                    push @{${$self->{RESULTS}}}, $h->{RESULT};
+                    push @{$self->{RESULTS}}, $h->{RESULT};
                     delete $href_h->{$pid};
                     delete $d->{$pid};
                     push @ids, $h->{ID};
@@ -990,5 +1019,3 @@ IPv6 ff02::fb
   format STDOUT =
   vec($_,@#,@#) = @<< == @######### @>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
   $off, $width, $bits, $val, $res
-  .
-
