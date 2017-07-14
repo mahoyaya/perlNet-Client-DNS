@@ -3,7 +3,7 @@ our $VERSION = '0.00001';
 use strict;
 use warnings;
 use Carp;
-use JSON::PP
+use JSON::PP;
 use Time::HiRes qw(usleep);
 
 #my %reqid = {};
